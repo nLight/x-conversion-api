@@ -92,6 +92,13 @@ variable names. Multiple apps may reference the same X token variable if that to
 has the required permissions. Restart the process after changing its configuration
 or environment.
 
+For hosted deployments without a configuration file, set `CONVERSION_APPS_JSON` to
+the complete JSON object with an `apps` array, using the same format as
+`config/apps.example.json`. A nonempty value takes precedence over `-config` in both
+commands. An invalid value fails startup instead of falling back to a file. An unset
+or whitespace-only value preserves file-based configuration. The JSON contains app
+settings and environment variable names; keep the actual tokens in separate variables.
+
 ## Submitting events
 
 ```http
@@ -250,6 +257,10 @@ shared service.
 
 ### Docker and persistent storage
 
+For Coolify, use [`compose.coolify.yaml`](compose.coolify.yaml) and the instructions
+below. The default `compose.yaml` in this section is for self-managed deployments
+with an explicitly created external volume.
+
 The container writes its outbox and deduplication records to `/data`. The Dockerfile
 declares this directory as a `VOLUME`; Compose mounts the external named volume
 `conversion-api-data`. Its name is independent of the Compose project name or
@@ -310,6 +321,45 @@ container.
 Compose publishes the port only on localhost. For external access, configure an HTTPS
 reverse proxy and restrict access to trusted producers. Use one container per volume;
 the outbox lock prevents concurrent delivery by multiple instances.
+
+### Coolify deployment
+
+Use `compose.coolify.yaml` for a Git-based Docker Compose application in Coolify.
+It requires no host configuration file and no manually created Docker volume.
+
+1. Set **Docker Compose Location** to `/compose.coolify.yaml`, save, and reload the
+   Compose definition from the repository. Keep the same Coolify resource for redeploys.
+2. In **Environment Variables**, set `CONVERSION_APPS_JSON` to the complete contents
+   of your private `config/apps.json`. JSON can be entered on one line. Supply every
+   token variable referenced by its `ingest_token_env` and `x_token_env` fields as
+   runtime environment variables. For the example configuration these are
+   `EXAMPLE_INGEST_TOKEN` (a unique random secret of at least 32 characters) and
+   `X_APP_CONVERSION_TOKEN`. Custom token variable names also work through `env_file`.
+   Tokens are needed only at runtime; disable build-time availability for them.
+3. Review **Persistent Storage** after reloading. This definition mounts only a
+   managed volume at `/data`. It does not mount `/config/apps.json`; the previous
+   directory/file mount at that path is not needed. Do not copy private app settings
+   into the public repository to provide that file.
+4. If using a public domain, point Coolify's proxy at the service's internal port,
+   for example `https://conversions.example.com:8080`. This file exposes port 8080
+   inside the Docker network rather than publishing a host port.
+5. Deploy and check `/healthz`, `/readyz`, and runtime logs. Without an X token,
+   `/readyz` returns 503 while events remain queued.
+
+Coolify creates the managed volume on the first deployment and reuses it when the
+same resource is redeployed. Its deployed name may include the resource UUID; check
+the rendered Compose definition for the exact name. Recreating the resource is not
+the same as redeploying it: migrate the volume if moving data to a different resource
+or server. Explicit volume deletion (including Compose `down -v` on this managed
+stack) can remove the data. This differs from the external-volume setup above.
+
+If deployment fails with `external volume "conversion-api-data" not found`, it is
+using the self-managed `compose.yaml`, which deliberately requires a pre-created
+volume. Select `compose.coolify.yaml` for automatic provisioning, or create the
+external volume on the deployment server when intentionally using the self-managed
+setup. A mount shown under **Directories** with destination `/config/apps.json` is
+also incorrect: that path expects a file. The Coolify definition avoids that mount
+by loading `CONVERSION_APPS_JSON` directly.
 
 ## Testing with a real X token
 

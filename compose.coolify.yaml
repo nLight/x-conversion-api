@@ -1,0 +1,20 @@
+services:
+  conversion-api:
+    build: .
+    restart: unless-stopped
+    # Coolify generates this file from the resource's runtime environment.
+    # It also passes through per-app token variables referenced by the JSON config.
+    env_file: .env
+    environment:
+      CONVERSION_APPS_JSON: ${CONVERSION_APPS_JSON:?Set CONVERSION_APPS_JSON to your app configuration JSON}
+      X_APP_CONVERSION_TOKEN: ${X_APP_CONVERSION_TOKEN:-}
+      EXAMPLE_INGEST_TOKEN: ${EXAMPLE_INGEST_TOKEN:-}
+    expose:
+      - "8080"
+    volumes:
+      - conversion-data:/data
+    stop_grace_period: 30s
+volumes:
+  # Created automatically on first deployment and reused by the same Coolify resource.
+  # Coolify manages the deployed name; no pre-created external volume is required.
+  conversion-data:

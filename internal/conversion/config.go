@@ -28,6 +28,16 @@ var namePattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 var envPattern = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
 
 func LoadConfig(path string) (Configuration, error) {
+	// Hosted deployments can provide private app settings without a bind-mounted
+	// configuration file. Invalid nonempty JSON must fail rather than fall back.
+	if raw := os.Getenv("CONVERSION_APPS_JSON"); strings.TrimSpace(raw) != "" {
+		var config Configuration
+		if err := decodeJSON(strings.NewReader(raw), &config); err != nil {
+			// Do not include JSON or decoder errors: the input is deployment config.
+			return config, fmt.Errorf("CONVERSION_APPS_JSON must contain valid application configuration JSON")
+		}
+		return config, config.Validate()
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		return Configuration{}, err
