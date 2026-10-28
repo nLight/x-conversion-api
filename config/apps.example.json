@@ -1,0 +1,13 @@
+{
+  "apps": [
+    {
+      "key": "example-android",
+      "app_id": "com.example.app",
+      "os_type": "ANDROID",
+      "x_account_id": "YOUR_X_AD_ACCOUNT_ID",
+      "x_token_env": "X_APP_CONVERSION_TOKEN",
+      "ingest_token_env": "EXAMPLE_INGEST_TOKEN",
+      "events": ["INSTALL", "PURCHASE", "TUTORIAL_COMPLETE"]
+    }
+  ]
+}

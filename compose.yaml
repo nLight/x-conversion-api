@@ -1,0 +1,17 @@
+services:
+  conversion-api:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - conversion-data:/data
+      - ./config/apps.json:/config/apps.json:ro
+    stop_grace_period: 30s
+volumes:
+  conversion-data:
+    # Stable across Compose project names and independent of container redeploys.
+    # Create once: docker volume create conversion-api-data
+    external: true
+    name: ${CONVERSION_DATA_VOLUME:-conversion-api-data}
