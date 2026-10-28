@@ -26,6 +26,7 @@ func decodeJSON(reader io.Reader, target interface{}) error {
 type API struct {
 	Config Configuration
 	Store  *Store
+	Mobile *MobileAPI
 }
 
 func writeJSON(w http.ResponseWriter, status int, value interface{}) {
@@ -40,6 +41,10 @@ func fail(w http.ResponseWriter, status int, message string) {
 }
 
 func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if strings.HasPrefix(r.URL.Path, "/v1/mobile/") && a.Mobile != nil {
+		a.Mobile.ServeHTTP(w, r)
+		return
+	}
 	if (r.URL.Path == "/healthz" || r.URL.Path == "/readyz") && r.Method == http.MethodGet {
 		if r.URL.Path == "/readyz" && !a.Config.Ready() {
 			fail(w, http.StatusServiceUnavailable, "waiting_for_x_token")

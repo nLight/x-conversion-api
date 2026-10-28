@@ -130,6 +130,16 @@ func (s *Store) save(record Record) error {
 }
 
 func (s *Store) Enqueue(app, id string, payload Conversion, now time.Time) (Record, error) {
+	return s.enqueue(app, id, payload, now, false)
+}
+
+// EnqueueMobile keeps the first observation: an HTTP retry may arrive from a new
+// IP address. IDs are derived by the collector, never arbitrary client event IDs.
+func (s *Store) EnqueueMobile(app, id string, payload Conversion, now time.Time) (Record, error) {
+	return s.enqueue(app, id, payload, now, true)
+}
+
+func (s *Store) enqueue(app, id string, payload Conversion, now time.Time, first bool) (Record, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	body, err := json.Marshal(payload)
@@ -140,10 +150,13 @@ func (s *Store) Enqueue(app, id string, payload Conversion, now time.Time) (Reco
 	fingerprint := hex.EncodeToString(digest[:])
 	key := recordKey(app, id)
 	if existing, ok := s.records[key]; ok {
-		if existing.Fingerprint != fingerprint {
+		if !first && existing.Fingerprint != fingerprint {
 			return Record{}, ErrConflict
 		}
 		return publicRecord(existing), nil
+	}
+	if first && len(s.records) >= 100000 {
+		return Record{}, fmt.Errorf("mobile outbox capacity reached")
 	}
 	r := Record{AppKey: app, EventID: id, Fingerprint: fingerprint, Payload: &payload,
 		State: "pending", NextAttempt: now, UpdatedAt: now}

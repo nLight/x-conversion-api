@@ -11,19 +11,18 @@ and the Docker build context.
 
 ## Scope and responsibilities
 
-This service delivers confirmed conversions. It does not determine the source of an
-installation, validate Google Play purchase tokens, or verify tutorial completion.
+This service delivers conversions. It does not determine the source of an installation
+or prove tutorial completion. The optional mobile collector verifies store purchases.
 
 `POST /v1/apps/{key}/events` is intended for trusted server-side producers, such as
 attribution handlers, purchase validators, or progress handlers. An ingestion secret
 authorizes submissions for one specific app. A mobile client's `confirmed: true`
 assertion is not verification. Never embed `EXAMPLE_INGEST_TOKEN` or an X token in an
-APK/IPA. Direct mobile submissions require a separate endpoint with client verification
-(for example, Play Integrity), rate limiting, and server-side purchase validation.
-That endpoint is not implemented yet.
+APK/IPA. The separate opt-in mobile endpoint below accepts consented client observations
+and validates purchase receipts. It never grants trusted ingestion/status/retry access.
 
-Mobile app integration is a separate step. To use the X integration, deploy this
-service, configure its token, and connect a source of confirmed events. An HTTP 200
+To use the X integration, deploy this service, configure its token, and connect a
+producer or the mobile collector. An HTTP 200
 response from X confirms receipt; it does not guarantee attribution to a particular ad.
 
 ## Local setup
@@ -89,7 +88,7 @@ remaining healthy and accepting events into its outbox.
 
 Add an entry to `config/apps.json` with a unique `key`, a unique `os_type`/`app_id`
 pair, and its own `ingest_token_env` variable. `key` identifies the API route, while
-`app_id` is the package identifier sent to X. Clients cannot override the app ID,
+`app_id` is the platform app identifier configured in X. Clients cannot override the app ID,
 platform, or X account in a request.
 
 ```json
@@ -410,3 +409,87 @@ Each invocation creates a new test event, so do not run it automatically. Then v
 receipt in X Events Manager. Live delivery cannot be verified without an X token.
 
 The project's tests use a local HTTP mock and never send events to X.
+
+## Optional mobile collector
+
+Enabled only for app entries with a `mobile` object; existing trusted producers and
+credentials remain separate. Add, for example, to an Android entry:
+
+```json
+"mobile": {
+  "bundle_id": "com.example.app",
+  "product_ids": ["example.full_game"]
+}
+```
+
+For iOS, `bundle_id` is the signing bundle identifier; `app_id` is the app identifier
+configured in X, which can differ. Use separate app entries for Android and iOS.
+`mobile.product_ids` is an explicit purchase allowlist. All events must also appear
+in the app's normal `events` allowlist.
+
+```http
+POST /v1/mobile/apps/example-android/events
+Content-Type: application/json
+User-Agent: Example/1.0 (Android)
+```
+
+```json
+{
+  "installation_id": "11111111-2222-4333-8444-555555555555",
+  "event_name": "INSTALL",
+  "conversion_timestamp": 1792576800000,
+  "consent": true
+}
+```
+
+Submit one event per request (64 KiB maximum). `installation_id` is a random local
+UUID for deduplication, never an advertising ID sent to X. `INSTALL` means observed
+first launch; the client must preserve its first-launch timestamp and exclude upgrades.
+`TUTORIAL_COMPLETE` is deduplicated once per installation. HTTP 202 means durably queued,
+not delivered to or attributed by X. Retrying from a changed IP keeps the first observation.
+No receipt or identifier is returned in the response, and mobile clients cannot inspect
+or retry server outbox records.
+
+**Consent and matching:** iOS must send `att_status: "authorized"` and a real raw IDFA
+in `device_id`. No IP/email fallback bypasses ATT. Android uses the actual request IP
+and User-Agent after explicit app consent; the collector does not read advertising IDs.
+For Android, the IP must be public. Behind a reverse proxy, configure its actual
+`CONVERSION_TRUSTED_PROXY_CIDRS` and have it append/overwrite `X-Forwarded-For`. Only
+configured proxies are trusted, walking the header right to left. Never trust every IP.
+A private proxy IP without this configuration returns 503, preventing incorrect matching.
+
+**Purchases:** add a `purchase` object with `product_id` and either Android
+`purchase_token` or iOS `signed_transaction` (StoreKit `VerificationResult.jwsRepresentation`).
+Do not submit client prices or transaction IDs. The server derives the amount, currency,
+quantity, purchase time and deduplication ID from verified store data. Android uses
+Google's products.get and orders.get APIs, rejects pending/cancelled/test/promotional
+purchases, and requires a processed order matching the purchase token and product.
+Set `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` to a server-only service account JSON secret;
+enable Android Publisher API and grant that account purchase and financial/order access
+in Play Console. Credentials are shared by the service if granted access to several apps.
+Missing credentials/API permissions return 503 so the client can retry later. A rejected
+receipt returns 422. Purchase tokens and signed transactions are not persisted in the
+server outbox or sent to X; disable request-body logging at your reverse proxy as well.
+
+Apple verification checks ES256, an Apple Root CA G3 certificate chain, Apple's signing
+certificate OIDs, bundle/product IDs, production environment, ownership, revocation
+field and signed amount. Sandbox and promotional transactions are rejected. Certificate
+validity is checked at the signed date (offline mode). Live OCSP and subsequent refund
+reconciliation are not implemented; a valid historical receipt does not prove that the
+purchase remains unrefunded. The embedded root is public Apple PKI material, not a secret.
+
+**Trust boundary:** installation/tutorial observations are unauthenticated, as in a public
+analytics collector. Rate limiting (120 requests/IP/hour, bounded limiter map), allowlists,
+strict schema, deduplication and a 100,000-record mobile outbox ceiling limit abuse but do
+not prove genuine installations. App Attest / Play Integrity are not implemented. Enable
+mobile intake only if this trust level is acceptable; use trusted attribution/progress
+producers otherwise. The mobile ceiling includes sent tombstones; plan retention/capacity
+before reaching it. Removing tombstones also removes deduplication, so never blindly purge
+and replay historical events. Public intake is disabled by default.
+
+Clients should persist events before HTTP submission, remove them only after 202 or a
+terminal validation rejection, respect Retry-After, and stop/clear pending submissions on
+consent withdrawal. Keep first-launch and completed-event markers so consent toggles and
+network retries do not create additional installs. Do not report restores, complimentary
+unlocks or development/test transactions as new purchases. Update the hosted privacy policy
+and app store data disclosures before shipping tracking-enabled clients.

@@ -16,6 +16,7 @@ credentials
 *.sqlite
 *.sqlite3
 *.pem
+!internal/conversion/apple-root-g3.pem
 *.key
 *.p12
 *.pfx

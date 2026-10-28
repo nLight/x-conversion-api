@@ -15,13 +15,14 @@ type Configuration struct {
 }
 
 type App struct {
-	Key            string   `json:"key"`
-	AppID          string   `json:"app_id"`
-	OSType         string   `json:"os_type"`
-	XAccountID     string   `json:"x_account_id"`
-	XTokenEnv      string   `json:"x_token_env"`
-	IngestTokenEnv string   `json:"ingest_token_env"`
-	Events         []string `json:"events"`
+	Key            string        `json:"key"`
+	AppID          string        `json:"app_id"`
+	OSType         string        `json:"os_type"`
+	XAccountID     string        `json:"x_account_id"`
+	XTokenEnv      string        `json:"x_token_env"`
+	IngestTokenEnv string        `json:"ingest_token_env"`
+	Events         []string      `json:"events"`
+	Mobile         *MobileConfig `json:"mobile,omitempty"`
 }
 
 var namePattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
@@ -73,6 +74,14 @@ func (c Configuration) Validate() error {
 		ingestEnvs[app.IngestTokenEnv] = true
 		if len(app.Events) == 0 {
 			return fmt.Errorf("%s: an event allowlist is required", app.Key)
+		}
+		if app.Mobile != nil {
+			if strings.TrimSpace(app.Mobile.BundleID) == "" || len(app.Mobile.ProductIDs) == 0 {
+				return fmt.Errorf("%s: mobile requires bundle_id and product_ids", app.Key)
+			}
+			if app.OSType == "ANDROID" && app.Mobile.BundleID != app.AppID {
+				return fmt.Errorf("%s: Android bundle_id must equal app_id", app.Key)
+			}
 		}
 		for _, event := range app.Events {
 			if event != "INSTALL" && event != "PURCHASE" && event != "TUTORIAL_COMPLETE" {

@@ -47,9 +47,13 @@ func run() error {
 		return err
 	}
 	defer store.Close()
+	mobile, err := conversion.NewMobileAPI(config, store, os.Getenv("CONVERSION_TRUSTED_PROXY_CIDRS"))
+	if err != nil {
+		return err
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	server := &http.Server{Addr: *listen, Handler: &conversion.API{Config: config, Store: store},
+	server := &http.Server{Addr: *listen, Handler: &conversion.API{Config: config, Store: store, Mobile: mobile},
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second,
 		WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
 	errorsCh := make(chan error, 2)
