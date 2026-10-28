@@ -1,75 +1,79 @@
 # Conversion API
 
-Общий Go-сервис конверсий для нескольких приложений. Принимает подтверждённые события,
-сохраняет их в файловую очередь и передаёт в X App Conversion API. Сервис разворачивается независимо от приложений. Внешних Go-зависимостей нет.
+A shared Go service for conversion events from multiple apps. It accepts confirmed
+events, stores them in a durable file outbox, and forwards them to the X App Conversion
+API. The service runs independently of your apps and has no external Go dependencies.
 
-В `config/apps.example.json` приведён шаблон приложения. Поддерживаются события
-`INSTALL`, `PURCHASE`, `TUTORIAL_COMPLETE`. Рабочие настройки `config/apps.json`,
-секреты `.env` и данные `data/` исключены из Git и Docker build context.
+`config/apps.example.json` provides an application configuration template. Supported
+events are `INSTALL`, `PURCHASE`, and `TUTORIAL_COMPLETE`. The working configuration
+`config/apps.json`, secrets in `.env`, and event data in `data/` are excluded from Git
+and the Docker build context.
 
-## Граница ответственности
+## Scope and responsibilities
 
-Сервис — транспорт подтверждённых конверсий. Он сам не определяет источник установки,
-не проверяет Google Play purchase token и не доказывает прохождение обучения.
+This service delivers confirmed conversions. It does not determine the source of an
+installation, validate Google Play purchase tokens, or verify tutorial completion.
 
-`POST /v1/apps/{key}/events` предназначен для доверенной серверной логики: обработчика
-атрибуции, валидатора покупки или обработчика прогресса. Секрет приёма даёт право отправлять
-события конкретного приложения; `confirmed: true` от мобильного клиента проверкой не является.
-Нельзя встраивать `EXAMPLE_INGEST_TOKEN` или токен X в APK/IPA. Для прямой отправки из игры
-понадобится отдельный маршрут с проверкой клиента (например, Play Integrity), ограничением
-частоты запросов и серверной проверкой покупки. Он пока не реализован.
+`POST /v1/apps/{key}/events` is intended for trusted server-side producers, such as
+attribution handlers, purchase validators, or progress handlers. An ingestion secret
+authorizes submissions for one specific app. A mobile client's `confirmed: true`
+assertion is not verification. Never embed `EXAMPLE_INGEST_TOKEN` or an X token in an
+APK/IPA. Direct mobile submissions require a separate endpoint with client verification
+(for example, Play Integrity), rate limiting, and server-side purchase validation.
+That endpoint is not implemented yet.
 
-В проектах игр ничего не изменено. Интеграция X будет работать после запуска этого сервиса,
-настройки токена и подключения источника подтверждённых событий. Полученный от X HTTP 200
-означает приём события, а не гарантию атрибуции конкретной рекламе.
+Mobile app integration is a separate step. To use the X integration, deploy this
+service, configure its token, and connect a source of confirmed events. An HTTP 200
+response from X confirms receipt; it does not guarantee attribution to a particular ad.
 
-## Локальный запуск
+## Local setup
 
-Нужен Go 1.21+ на macOS/Linux. На машине разработки проверено с установленным Go 1.21.13;
-для развёртывания используйте поддерживаемую версию Go (Dockerfile использует 1.27.3).
-На macOS с Go 1.21 Makefile передаёт путь к SDK, использует системный linker и создаёт
-локальную ad hoc-подпись бинарников. Для этой совместимости нужны Xcode command line tools.
+Requires Go 1.21+ on macOS/Linux. Tested with Go 1.21.13. Use a supported Go release
+for deployment; the Dockerfile uses 1.27.3. On macOS with Go 1.21, the Makefile supplies
+the SDK path, uses the system linker, and applies local ad hoc signatures to the
+binaries. This compatibility setup requires the Xcode command line tools.
 
 ```sh
 cp .env.example .env
 cp config/apps.example.json config/apps.json
-# Укажите свой app_id и x_account_id в config/apps.json.
+# Set your app_id and x_account_id in config/apps.json.
 openssl rand -hex 32
-# Сохраните результат в EXAMPLE_INGEST_TOKEN внутри .env.
-# Добавьте X_APP_CONVERSION_TOKEN после генерации в X Ads Manager.
+# Save the result as EXAMPLE_INGEST_TOKEN in .env.
+# Add X_APP_CONVERSION_TOKEN after generating it in X Ads Manager.
 
 make test
 make build
 ./bin/conversion-api
 ```
 
-По умолчанию слушает `127.0.0.1:8080`, очередь хранится в `./data`.
-Обе команды, `conversion-api` и `send-test`, автоматически читают `.env` из текущей
-рабочей папки. Уже заданные переменные окружения имеют приоритет, включая пустые значения.
-Поддерживаются комментарии, префикс `export`, одинарные и двойные кавычки. Shell-код и
-подстановка переменных не выполняются; значения задаются буквально. Отсутствующий файл
-по умолчанию допустим — окружение может передать shell, процесс-менеджер или Docker Compose.
+The server listens on `127.0.0.1:8080` by default and stores its outbox in `./data`.
+Both commands, `conversion-api` and `send-test`, automatically read `.env` from the
+current working directory. Existing environment variables take precedence, including
+explicitly empty values. Comments, the `export` prefix, and single- and double-quoted
+values are supported. Shell code and variable substitution are not evaluated; values
+are treated literally. The default file may be absent when the environment is supplied
+by a shell, process manager, or Docker Compose.
 
-Флаги сервера: `-listen`, `-data`, `-config`, `-env-file`. Другой файл можно выбрать через
-`-env-file /path/to/.env`; `-env-file ""` отключает чтение. Явно указанный отсутствующий
-файл (кроме значения по умолчанию `.env`) возвращает ошибку. Конфигурация и пути к данным
-также разрешаются относительно текущей папки.
+Server flags: `-listen`, `-data`, `-config`, and `-env-file`. Select another file with
+`-env-file /path/to/.env`, or disable file loading with `-env-file ""`. An explicitly
+selected file that does not exist returns an error, except for the optional default
+`.env`. Configuration and data paths are also relative to the current working directory.
 
 ```sh
 curl --fail http://127.0.0.1:8080/healthz
 curl --fail http://127.0.0.1:8080/readyz
 ```
 
-`healthz` проверяет, что процесс отвечает. `readyz` возвращает 503, пока хотя бы для
-одного приложения не задан токен X. Без токена X сервис сохраняет события, но не отправляет.
-Пустой или общий между приложениями секрет приёма не позволяет запустить сервис.
+`healthz` checks that the process responds. `readyz` returns 503 until every configured
+app has an X token. Without an X token, the service stores events but does not send
+them. An empty ingestion secret, or one shared between apps, prevents startup.
 
-## Добавление приложений
+## Adding apps
 
-В `config/apps.json` добавьте запись с уникальными `key`, сочетанием `os_type`/`app_id`
-и собственной переменной `ingest_token_env`. `key` — имя маршрута API, `app_id` —
-идентификатор пакета, который отправляется в X. Клиент не может переопределить `app_id`,
-платформу или кабинет X в запросе.
+Add an entry to `config/apps.json` with a unique `key`, a unique `os_type`/`app_id`
+pair, and its own `ingest_token_env` variable. `key` identifies the API route, while
+`app_id` is the package identifier sent to X. Clients cannot override the app ID,
+platform, or X account in a request.
 
 ```json
 {
@@ -83,11 +87,12 @@ curl --fail http://127.0.0.1:8080/readyz
 }
 ```
 
-Секреты задаются в окружении сервера, JSON хранит только их имена. Для общего токена X
-несколько приложений могут ссылаться на одну переменную, если токен имеет нужные права.
-После изменения конфигурации или окружения перезапустите процесс.
+Secrets are supplied through the server environment; the JSON file stores only their
+variable names. Multiple apps may reference the same X token variable if that token
+has the required permissions. Restart the process after changing its configuration
+or environment.
 
-## Приём событий
+## Submitting events
 
 ```http
 POST /v1/apps/example-android/events
@@ -111,26 +116,26 @@ Content-Type: application/json
 }
 ```
 
-UUID и timestamp выше — иллюстрация формата, не готовое тестовое событие. Используйте
-время фактического подтверждённого события в **миллисекундах Unix**, а не время повторной
-отправки. API принимает 1–500 событий за запрос; каждое содержит хотя бы один допустимый
-идентификатор. Новые типы событий добавляются в код и allowlist явно.
+The UUID and timestamp above illustrate the format; they are not a ready-to-send
+test event. Use the confirmed event's actual time in **Unix milliseconds**, not the
+time of a retry. The API accepts 1–500 events per request, each with at least one
+valid identifier. New event types must be explicitly added to the code and allowlist.
 
-`event_id` стабилен для одной операции: для INSTALL — ID установки, для PURCHASE —
-серверный ID проверенного заказа, для TUTORIAL_COMPLETE — ID установки + версия обучения.
-Повторяйте исходный запрос с теми же ID и содержимым после сетевой ошибки. Другая нагрузка
-с тем же ID возвращает 409. При частично сохранённой пачке повтор исходной пачки безопасен.
-Обновление приложения, восстановление покупки и повторное открытие экрана обучения
-не должны порождать новое событие.
+Keep `event_id` stable for each action: use an installation ID for INSTALL, the
+server-side ID of a verified order for PURCHASE, and an installation ID plus tutorial
+version for TUTORIAL_COMPLETE. After a network error, retry the original request with
+the same IDs and content. A different payload with an existing ID returns 409. Retrying
+the original batch is safe if only part of it was saved. App updates, purchase restores,
+and reopening the tutorial completion screen must not create new events.
 
-Ответ 202 означает запись в очередь. Отдельно проверяйте доставку:
+A 202 response means the event was saved to the outbox. Check delivery separately:
 
 ```http
 GET /v1/apps/example-android/events/install:verified-installation-id
 Authorization: Bearer <EXAMPLE_INGEST_TOKEN>
 ```
 
-Пример успешного статуса:
+Example of a successful delivery status:
 
 ```json
 {
@@ -144,36 +149,37 @@ Authorization: Bearer <EXAMPLE_INGEST_TOKEN>
 }
 ```
 
-### Идентификаторы
+### Identifiers
 
-`identifiers` — объект с одним или несколькими полями:
+`identifiers` is an object containing one or more fields:
 
-| Поля | Обработка |
+| Fields | Processing |
 |---|---|
-| `device_id` | Настоящий ненулевой advertising UUID; отправляется без хеширования |
+| `device_id` | A real, nonzero advertising UUID; sent without hashing |
 | `email` | Trim → lowercase → SHA-256 hex |
-| `phone_number` | Удаление пробелов/скобок/дефисов → проверка E.164 с явным `+` и кодом страны → SHA-256 hex |
-| `hashed_email`, `hashed_phone_number` | Готовые SHA-256 hex; повторно не хешируются |
-| `ip_address` вместе с `user_agent` | Оба обязательны для этой пары; используются адрес и агент исходного пользователя |
+| `phone_number` | Remove spaces, parentheses, and hyphens → validate E.164 with an explicit `+` and country code → SHA-256 hex |
+| `hashed_email`, `hashed_phone_number` | Existing SHA-256 hex digests; not hashed again |
+| `ip_address` together with `user_agent` | Both are required for this pair; use the original user's address and user agent |
 
-Национальный телефон без кода страны отклоняется: сервис не угадывает страну. Нельзя
-передать одновременно сырой и хешированный вариант одного контактного поля.
-Сырые email/телефоны не записываются в очередь. Тела запросов и токены не логируются.
-Адрес/агент сервера-посредника не подходят для сопоставления пользователя; API не подставляет
-их автоматически и не доверяет произвольному `X-Forwarded-For`.
+Phone numbers without a country code are rejected; the service does not guess the
+country. Do not supply both raw and hashed versions of the same contact field.
+Raw email addresses and phone numbers are not written to the outbox. Request bodies
+and tokens are not logged. An intermediary server's IP address and user agent are
+not suitable for user matching. The API does not insert them automatically or trust
+arbitrary `X-Forwarded-For` headers.
 
-Android-производитель явно передаёт `limit_ad_tracking` из настроек/полученных данных
-устройства; рекламный ID при установленном флаге отклоняется. Передавайте только данные,
-которые разрешено использовать для измерения рекламы.
+Android producers must explicitly supply `limit_ad_tracking` based on device settings
+or data received from the device. An advertising ID is rejected when that flag is set.
+Only submit data you are permitted to use for advertising measurement.
 
-Для конфигурации `IOS` вместо Android-флага обязателен `att_status`. Флаг для X выводится
-из ATT. Этот маршрут поддерживает идентифицируемые iOS-конверсии только при `authorized`;
-`denied`, `restricted`, `not_determined` отклоняются. Агрегированная атрибуция SKAdNetwork
-обрабатывается отдельно и здесь пока не реализована.
+For `IOS` configurations, `att_status` is required instead of the Android flag. The
+flag sent to X is derived from ATT. This endpoint supports identifiable iOS conversions
+only when the status is `authorized`; `denied`, `restricted`, and `not_determined` are
+rejected. Aggregate SKAdNetwork attribution is a separate flow and is not implemented here.
 
-### Покупка и обучение
+### Purchases and tutorial completion
 
-Для `PURCHASE` дополнительно обязательны подтверждённые стоимость/валюта/товар:
+`PURCHASE` additionally requires verified value, currency, and product information:
 
 ```json
 {
@@ -191,35 +197,37 @@ Android-производитель явно передаёт `limit_ad_tracking`
 }
 ```
 
-Вызывайте приём после проверки purchase token/состояния покупки сервером. Цена выше только
-пример: передавайте реальную валюту и стоимость заказа. Debug-разблокировка, промокод,
-pending/cancelled/failed-покупка и восстановление права не являются новой PURCHASE.
+Submit the event after the server has verified the purchase token and purchase state.
+The price above is only an example; use the order's actual currency and value. Debug
+unlocks, promotional codes, pending/cancelled/failed purchases, and entitlement restores
+are not new PURCHASE events.
 
-Завершение обучения отправляется как `TUTORIAL_COMPLETE` с теми же базовыми полями.
-Выберите конкретный критерий завершения обучения в приложении; показ экрана или
-закрытие подсказки сами по себе не подтверждают прохождение. Доверенный источник должен
-подтвердить этот переход. Создайте Purchase и Tutorial complete в X Events Manager для приложения;
-при подключении X создаёт только Install.
+Submit tutorial completion as `TUTORIAL_COMPLETE` with the same base fields. Define a
+specific completion criterion in your app; displaying a screen or closing a hint does
+not itself establish completion. A trusted producer must verify this transition.
+Create Purchase and Tutorial complete events for the app in X Events Manager;
+X creates only Install when the integration is connected.
 
-## Доставка и эксплуатация
+## Delivery and operations
 
-Очередь сгруппирована по приложению: до 500 конверсий на POST в
+The outbox is grouped by app, with up to 500 conversions per POST to
 `https://ads-api.x.com/12/accounts/{account}/measurement/app_conversions`.
-Заголовок `X-App-Conversion-Token` читается из соответствующей переменной окружения.
-HTTP redirects не выполняются. Успех — HTTP 200 **и** `data.conversions_processed`, равное
-размеру пачки; сохраняется `debug_id`.
+The `X-App-Conversion-Token` header is read from the corresponding environment variable.
+HTTP redirects are not followed. Success requires HTTP 200 **and**
+`data.conversions_processed` equal to the batch size. The `debug_id` is saved.
 
-| Состояние | Значение |
+| State | Meaning |
 |---|---|
-| `pending` | Ждёт отправки или повтора после 401/403/429; учитывается Retry-After |
-| `sending` | Запрос начат; состояние сохраняется перед HTTP-вызовом |
-| `sent` | X подтвердил всю пачку; идентификаторы удалены из записи |
-| `failed` | X отклонил событие (400/404/422); автоматического повтора нет |
-| `uncertain` | Timeout/сбой сети/5xx/неполный ответ/перезапуск во время запроса; результат неизвестен |
+| `pending` | Waiting for delivery or a retry after 401/403/429; honors Retry-After |
+| `sending` | Delivery has started; the state is saved before the HTTP request |
+| `sent` | X acknowledged the entire batch; identifiers have been removed from the record |
+| `failed` | X rejected the event (400/404/422); no automatic retry |
+| `uncertain` | Timeout, network failure, 5xx, incomplete response, or restart during delivery; the outcome is unknown |
 
-В предоставленном контракте X нет ключа идемпотентности. Наш `event_id` исключает повтор
-постановки в очередь, но не даёт гарантии exactly-once внутри X. `uncertain` автоматически
-не повторяется. Сначала проверьте событие в X; осознанный повтор доступен через:
+The supplied X API contract has no idempotency key. Our `event_id` prevents duplicate
+outbox submissions but cannot guarantee exactly-once processing inside X. Events in
+the `uncertain` state are not retried automatically. Check the event in X first;
+an explicit retry is available through:
 
 ```http
 POST /v1/apps/example-android/events/install:verified-installation-id/retry
@@ -229,49 +237,53 @@ Content-Type: application/json
 {"accept_duplicate_risk":true}
 ```
 
-Повтор доступен только для `failed`/`uncertain`. Отправленные записи сохраняются как
-метаданные дедупликации; автоматического удаления этих ID нет. Неотправленные записи
-содержат нормализованные идентификаторы. Папка данных и её резервные копии должны быть закрыты.
+Only `failed` and `uncertain` events can be retried. Sent records remain as deduplication
+metadata; these IDs are not deleted automatically. Unsent records contain normalized
+identifiers. Restrict access to the data directory and its backups.
 
-В этой версии один процесс использует одну папку данных; файловая блокировка предотвращает
-запуск двух отправителей. Диск должен быть постоянным, локальным, с поддержкой `fsync` и
-атомарного rename. Нельзя масштабировать реплики поверх общего NFS. Для масштабирования
-следующим шагом будет общая БД с транзакционным захватом задач. Память и число файлов растут
-с количеством уникальных событий; это стартовая версия для небольшого общего сервиса.
+This version uses one process per data directory. A file lock prevents two dispatchers
+from using the same directory. Storage must be persistent and local, with support for
+`fsync` and atomic rename. Do not scale replicas over shared NFS. Scaling requires a
+shared database with transactional job claiming. Memory usage and the number of files
+grow with the number of unique events; this initial version is intended for a small
+shared service.
 
-### Docker и постоянный том
+### Docker and persistent storage
 
-Контейнер пишет очередь и записи дедупликации в `/data`. Dockerfile объявляет эту папку
-как `VOLUME`; Compose подключает именованный внешний том `conversion-api-data`.
-Его имя не зависит от имени Compose-проекта или каталога развёртывания.
+The container writes its outbox and deduplication records to `/data`. The Dockerfile
+declares this directory as a `VOLUME`; Compose mounts the external named volume
+`conversion-api-data`. Its name is independent of the Compose project name or
+deployment directory.
 
-Первый запуск из корня проекта, после создания и заполнения `.env` и `config/apps.json`
-по файлам-примерам. Рабочий конфиг подключается в контейнер только для чтения и не
-встраивается в образ:
+For the first deployment, create and populate `.env` and `config/apps.json` from the
+example files, then run the following from the project root. The working configuration
+is mounted read-only and is not embedded in the image:
 
 ```sh
 docker volume create conversion-api-data
 docker compose up --build -d
 ```
 
-`docker volume create` создаёт том один раз; повторный вызов с тем же именем не очищает его.
-Обновление образа и пересоздание контейнера:
+`docker volume create` creates the volume once; repeating it with the same name does
+not clear existing data. To rebuild the image and recreate the container:
 
 ```sh
 docker compose up --build -d --force-recreate
 ```
 
-Повторно подключается тот же том, поэтому очередь, статусы отправки и защита от дублей
-сохраняются. Том помечен `external: true`: его жизненный цикл независим от Compose,
-и `docker compose down` / `docker compose down -v` его не удаляют. Фактические файлы
-остаются на Docker-хосте; для другого хоста том нужно перенести или восстановить из копии.
-Ручное удаление самого тома удалит эти данные.
+The same volume is mounted again, preserving the outbox, delivery statuses, and
+deduplication records. The volume is marked `external: true`, so its lifecycle is
+independent of Compose: neither `docker compose down` nor `docker compose down -v`
+removes it. The files remain on the Docker host. Moving to another host requires
+migrating the volume or restoring a backup. Manually deleting the volume deletes
+these records.
 
-Существующий том можно выбрать через `CONVERSION_DATA_VOLUME` в `.env`. Compose требует,
-чтобы указанный внешний том уже существовал. Если ранее запускали старый Compose с томом
-`<project>_conversion-data`, укажите его точное имя: это подключит прежние данные без миграции.
+Select an existing volume with `CONVERSION_DATA_VOLUME` in `.env`. Compose requires
+that the specified external volume already exist. If you previously used the older
+Compose configuration with a `<project>_conversion-data` volume, specify its exact
+name to reuse the existing data without migration.
 
-Запуск без Compose:
+To run without Compose:
 
 ```sh
 docker build -t conversion-api:local .
@@ -284,36 +296,38 @@ docker run -d --name conversion-api --restart unless-stopped \
   conversion-api:local
 ```
 
-В новом именованном томе Docker сохраняет владельца подготовленной папки `/data`, поэтому
-сервис работает от непривилегированного UID/GID `65532:65532`. Для bind mount (`/srv/path:/data`)
-или ранее созданного тома нужно обеспечить этому UID запись в каталог. Не используйте
-анонимный том для передеплоя: новый контейнер сам не найдёт прежний анонимный том.
+For a new named volume, Docker preserves the ownership of the prepared `/data`
+directory, allowing the service to run as the unprivileged UID/GID `65532:65532`.
+For a bind mount (`/srv/path:/data`) or an existing volume, ensure that this UID can
+write to the directory. Do not use anonymous volumes for redeployment: a new container
+does not automatically locate an earlier anonymous volume.
 
-Локальная папка `./data` из запуска без Docker автоматически в том не переносится. Для переноса
-существующих данных сначала остановите локальный сервис, затем скопируйте содержимое `./data/`
-в том с владельцем `65532:65532`; после этого запускайте контейнер.
+The local `./data` directory used outside Docker is not copied into the volume
+automatically. To migrate existing data, stop the local service first, copy the
+contents of `./data/` into the volume with ownership `65532:65532`, then start the
+container.
 
-Compose публикует порт только на localhost. Для внешнего доступа настройте HTTPS reverse proxy
-и доступ только доверенным производителям. Используйте один контейнер на том: блокировка
-очереди предотвращает параллельную отправку двумя экземплярами.
+Compose publishes the port only on localhost. For external access, configure an HTTPS
+reverse proxy and restrict access to trusted producers. Use one container per volume;
+the outbox lock prevents concurrent delivery by multiple instances.
 
-## Проверка с настоящим токеном X
+## Testing with a real X token
 
-1. В X Ads Manager, в окне **Send events to X App Conversion API**, нажмите
-   **Generate access token**. Сохраните токен в `X_APP_CONVERSION_TOKEN` на сервере.
-2. Перезапустите сервис и проверьте `/readyz`.
-3. Задайте `X_TEST_DEVICE_ID` настоящего Android-тестового устройства с разрешённым
-   рекламным измерением в `.env` и выполните из корня проекта:
+1. In X Ads Manager, open **Send events to X App Conversion API** and click
+   **Generate access token**. Save the token as `X_APP_CONVERSION_TOKEN` on the server.
+2. Restart the service and check `/readyz`.
+3. Set `X_TEST_DEVICE_ID` in `.env` to the raw advertising ID of a real Android test
+   device with advertising measurement allowed, then run from the project root:
 
 ```sh
 ./bin/send-test
-# Для развёрнутого сервиса:
+# For a deployed service:
 ./bin/send-test -url https://conversions.example.com
 ```
 
-Команда отправляет **реальное INSTALL**, не sandbox-событие, и ждёт `state=sent` с
-`x_http_status=200`. В ответе печатает `conversions_processed=1` и `debug_id`.
-Каждый запуск создаёт новое тестовое событие, поэтому не запускайте её автоматически.
-Затем проверьте получение в X Events Manager. Без токена X реальная доставка не проверена.
+The command submits a **real INSTALL**, not a sandbox event, and waits for `state=sent`
+with `x_http_status=200`. It prints `conversions_processed=1` and `debug_id` on success.
+Each invocation creates a new test event, so do not run it automatically. Then verify
+receipt in X Events Manager. Live delivery cannot be verified without an X token.
 
-Тесты проекта используют локальный HTTP mock и никогда не отправляют события в X.
+The project's tests use a local HTTP mock and never send events to X.
