@@ -14,4 +14,6 @@ COPY config/apps.example.json /config/apps.json
 VOLUME ["/data"]
 USER 65532:65532
 EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD ["/conversion-api", "-healthcheck", "http://127.0.0.1:8080/healthz"]
 ENTRYPOINT ["/conversion-api", "-listen", ":8080", "-data", "/data", "-config", "/config/apps.json"]

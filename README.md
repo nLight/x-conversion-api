@@ -68,6 +68,23 @@ curl --fail http://127.0.0.1:8080/readyz
 app has an X token. Without an X token, the service stores events but does not send
 them. An empty ingestion secret, or one shared between apps, prevents startup.
 
+The image and both Compose files include a health check against the container-local
+`http://127.0.0.1:8080/healthz`. It runs every 30 seconds, times out after 5 seconds,
+allows a 10-second startup period, and marks the container unhealthy after three
+consecutive failures. It uses the Go binary itself, so the scratch image does not
+need a shell, curl, or wget. The probe requires HTTP 200 and JSON `{"status":"ok"}`.
+
+You can run the same probe locally:
+
+```sh
+./bin/conversion-api -healthcheck http://127.0.0.1:8080/healthz
+```
+
+This mode exits with code 0 on success and a nonzero code on failure. It does not
+load configuration or secrets, open the outbox, or send events to X. `/readyz` is a
+separate configuration check: a missing X token must not prevent the service from
+remaining healthy and accepting events into its outbox.
+
 ## Adding apps
 
 Add an entry to `config/apps.json` with a unique `key`, a unique `os_type`/`app_id`
@@ -345,6 +362,18 @@ It requires no host configuration file and no manually created Docker volume.
    inside the Docker network rather than publishing a host port.
 5. Deploy and check `/healthz`, `/readyz`, and runtime logs. Without an X token,
    `/readyz` returns 503 while events remain queued.
+
+Coolify's Docker Compose applications do not use the standalone **Healthcheck** page.
+The check is already declared under the service's `healthcheck` section and in the
+Dockerfile. Reload the Compose definition and redeploy to apply it; after a successful
+probe, Docker reports `healthy`. Inspect it on the Docker host with:
+
+```sh
+docker inspect --format '{{.State.Health.Status}}' <container-name-or-id>
+```
+
+See [Coolify's health-check documentation](https://coolify.io/docs/applications/configuration/health-checks)
+for the distinction between Compose-owned and dashboard-configured checks.
 
 Coolify creates the managed volume on the first deployment and reuses it when the
 same resource is redeployed. Its deployed name may include the resource UUID; check

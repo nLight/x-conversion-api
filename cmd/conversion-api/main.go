@@ -27,7 +27,11 @@ func run() error {
 	dataPath := flag.String("data", "data", "durable outbox directory (one process per directory)")
 	listen := flag.String("listen", "127.0.0.1:8080", "HTTP listen address")
 	envPath := flag.String("env-file", ".env", "dotenv file; empty disables loading")
+	healthURL := flag.String("healthcheck", "", "check an HTTP health endpoint and exit without loading server configuration")
 	flag.Parse()
+	if *healthURL != "" {
+		return checkHealth(*healthURL)
+	}
 	if err := envfile.Load(*envPath); err != nil {
 		return err
 	}
